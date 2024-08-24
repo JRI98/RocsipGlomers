@@ -4,7 +4,7 @@ app [main] {
 }
 
 import pf.Task exposing [Task]
-import Helpers exposing [run, decodeJSON, reply, sendMessage, Payload]
+import Helpers exposing [decodeJSON, reply, Payload]
 
 NodeState : [State { nodeId : Str, nodeIds : List Str, msgId : U64, storage : { messages : Set U64, neighborsMessages : Dict Str (Set U64) } }]
 
@@ -74,9 +74,9 @@ handleInput = \input, loopState ->
             storage = unwrappedNodeState.storage
 
             replyInfo : [
-                Broadcast (Payload { type : Str, msgId : U64, message : U64 }, List [BroadcastOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, message : U64 })], NodeState),
+                Broadcast (Payload { type : Str, msgId : U64, message : U64 }, List [BroadcastOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, messages : List U64 })], NodeState),
                 Read (Payload { type : Str, msgId : U64 }, { type : Str, msgId : U64, inReplyTo : U64, messages : List U64 }, NodeState),
-                BroadcastNode (Payload { type : Str, msgId : U64, message : U64 }, List [BroadcastNodeOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, message : U64 })], NodeState),
+                BroadcastNode (Payload { type : Str, msgId : U64, messages : List U64 }, List [BroadcastNodeOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, messages : List U64 })], NodeState),
                 BroadcastNodeOk NodeState,
             ]
             replyInfo =
@@ -97,7 +97,7 @@ handleInput = \input, loopState ->
                                 then
                                     (msgs, nMsgs)
                                 else
-                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, message: message })), addToDictSet nMsgs k message)
+                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, messages: [message] })), addToDictSet nMsgs k [message])
                             )
 
                         newMessages = Set.insert storage.messages message
@@ -113,71 +113,76 @@ handleInput = \input, loopState ->
                         Read (p, { type: "read_ok", msgId: 0, inReplyTo: 0, messages: Set.toList storage.messages }, nodeState)
 
                     "broadcast_node" ->
-                        p : Payload { type : Str, msgId : U64, message : U64 }
+                        p : Payload { type : Str, msgId : U64, messages : List U64 }
                         p = decodeJSON input
-                        message = p.body.message
+                        messages = p.body.messages
 
-                        updatedNeighborsMessages = addToDictSet storage.neighborsMessages p.src message
+                        updatedNeighborsMessages = addToDictSet storage.neighborsMessages p.src messages
 
                         (messagesToNeighbors, newNeighborsMessages) = Dict.walk
                             updatedNeighborsMessages
                             ([], updatedNeighborsMessages)
                             (\(msgs, nMsgs), k, v ->
+                                missingMessages = Set.difference (Set.fromList messages) v
                                 if
-                                    Set.contains v message
+                                    Set.len missingMessages == 0
                                 then
                                     (msgs, nMsgs)
                                 else
-                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, message: message })), addToDictSet nMsgs k message)
+                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, messages: Set.toList missingMessages })), addToDictSet nMsgs k messages)
                             )
 
-                        newMessages = Set.insert storage.messages message
+                        newMessages = Set.union storage.messages (Set.fromList messages)
                         newStorage = { storage & messages: newMessages, neighborsMessages: newNeighborsMessages }
 
                         BroadcastNode
                             (p, List.concat [BroadcastNodeOk { type: "broadcast_node_ok", msgId: 0, inReplyTo: 0 }] messagesToNeighbors, State { unwrappedNodeState & storage: newStorage })
 
                     "broadcast_node_ok" ->
+                        p : Payload { type : Str, msgId : U64, inReplyTo : U64 }
+                        p = decodeJSON input
+
                         BroadcastNodeOk nodeState
 
                     bt -> crash "handlePayload: $(bt)"
 
-            newNodeState = Task.loop!
-                replyInfo
-                (\info ->
-                    when info is
-                        Broadcast (_, [], ns) | BroadcastNode (_, [], ns) ->
-                            Task.ok (Done ns)
+            newNodeState =
+                Task.loop!
+                    replyInfo
+                    (\info ->
+                        when info is
+                            Broadcast (_, [], ns) | BroadcastNode (_, [], ns) ->
+                                Task.ok (Done ns)
 
-                        Broadcast (payload, [BroadcastOk p, .. as rest], ns) ->
-                            newNs = reply! ns payload p
-                            Task.ok (Step (Broadcast (payload, rest, newNs)))
+                            Broadcast (payload, [BroadcastOk p, .. as rest], ns) ->
+                                newNs = reply! ns payload p
+                                Task.ok (Step (Broadcast (payload, rest, newNs)))
 
-                        Broadcast (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
-                            newNs = sendMessage! ns dest p
-                            Task.ok (Step (Broadcast (payload, rest, newNs)))
+                            Broadcast (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
+                                newNs = sendMessage! ns dest p
+                                Task.ok (Step (Broadcast (payload, rest, newNs)))
 
-                        Read (payload, p, ns) ->
-                            newNs = reply! ns payload p
-                            Task.ok (Done newNs)
+                            Read (payload, p, ns) ->
+                                newNs = reply! ns payload p
+                                Task.ok (Done newNs)
 
-                        BroadcastNode (payload, [BroadcastNodeOk p, .. as rest], ns) ->
-                            newNs = reply! ns payload p
-                            Task.ok (Step (BroadcastNode (payload, rest, newNs)))
+                            BroadcastNode (payload, [BroadcastNodeOk p, .. as rest], ns) ->
+                                newNs = reply! ns payload p
+                                Task.ok (Step (BroadcastNode (payload, rest, newNs)))
 
-                        BroadcastNode (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
-                            newNs = sendMessage! ns dest p
-                            Task.ok (Step (BroadcastNode (payload, rest, newNs)))
+                            BroadcastNode (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
+                                newNs = sendMessage! ns dest p
+                                Task.ok (Step (BroadcastNode (payload, rest, newNs)))
 
-                        BroadcastNodeOk ns ->
-                            Task.ok (Done ns)
+                            BroadcastNodeOk ns ->
+                                Task.ok (Done ns)
 
-                )
+                    )
 
             Task.ok (Running newNodeState topology)
 
-addToDictSet : Dict a (Set b), a, b -> Dict a (Set b)
-addToDictSet = \dict, k, v ->
+addToDictSet : Dict a (Set b), a, List b -> Dict a (Set b)
+addToDictSet = \dict, k, vs ->
     entry =
         when Dict.get dict k is
             Ok e -> e
@@ -185,7 +190,7 @@ addToDictSet = \dict, k, v ->
                 errStr = Inspect.toStr err
                 crash "addToDictSet: $(errStr)"
 
-    Dict.insert dict k (Set.insert entry v)
+    Dict.insert dict k (Set.union entry (Set.fromList vs))
 
 main =
     run handleInput
