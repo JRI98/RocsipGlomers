@@ -1,6 +1,5 @@
 module [run, decodeJSON, reply, sendMessage, Payload]
 
-import pf.Task exposing [Task]
 import pf.Stdin
 import pf.Stdout
 import pf.Stderr
