@@ -1,11 +1,11 @@
-app [main] {
-    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.16.0/O00IPk-Krg_diNS2dVWlI0ZQP794Vctxzv0ha96mK0E.tar.br",
-    json: "https://github.com/lukewilliamboswell/roc-json/releases/download/0.11.0/z45Wzc-J39TLNweQUoLw3IGZtkQiEN3lTBv3BXErRjQ.tar.br",
+app [main!] {
+    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.19.0/Hj-J_zxz7V9YurCSTFcFdu6cQJie4guzsPMUi5kBYUk.tar.br",
+    json: "https://github.com/lukewilliamboswell/roc-json/releases/download/0.12.0/1trwx8sltQ-e9Y2rOB4LWUWLS_sFVyETK8Twl0i9qpw.tar.gz",
 }
 
-import Helpers exposing [run, decodeJSON, reply, sendMessage, Payload]
+import Helpers exposing [run!, decode_json, reply!, send_message!, Payload]
 
-NodeState : [State { nodeId : Str, nodeIds : List Str, msgId : U64, storage : { messages : Set U64, neighborsMessages : Dict Str (Set U64) } }]
+NodeState : [State { node_id : Str, node_ids : List Str, msg_id : U64, storage : { messages : Set U64, neighbors_messages : Dict Str (Set U64) } }]
 
 # TODO(https://github.com/roc-lang/roc/issues/5294): Dict Str (List Str)
 Topology : {
@@ -20,176 +20,178 @@ NodeTopology : [Topology Topology]
 
 LoopState : [WaitingForInit, WaitingForTopology NodeState, Running NodeState NodeTopology]
 
-handleInput : Str, LoopState -> Task LoopState _
-handleInput = \input, loopState ->
-    when loopState is
+ReplyInfo : [
+    Broadcast (Payload { type : Str, msg_id : U64, message : U64 }, List [BroadcastOk { type : Str, msg_id : U64, in_reply_to : U64 }, BroadcastNode (Str, { type : Str, msg_id : U64, messages : List U64 })], NodeState),
+    Read (Payload { type : Str, msg_id : U64 }, { type : Str, msg_id : U64, in_reply_to : U64, messages : List U64 }, NodeState),
+    BroadcastNode (Payload { type : Str, msg_id : U64, messages : List U64 }, List [BroadcastNodeOk { type : Str, msg_id : U64, in_reply_to : U64 }, BroadcastNode (Str, { type : Str, msg_id : U64, messages : List U64 })], NodeState),
+    BroadcastNodeOk NodeState,
+]
+
+running_send_reply! : ReplyInfo => Result NodeState _
+running_send_reply! = |info|
+    when info is
+        Broadcast((_, [], ns)) | BroadcastNode((_, [], ns)) ->
+            Ok(ns)
+
+        Broadcast((payload, [BroadcastOk(p), .. as rest], ns)) ->
+            new_ns = try(reply!, ns, payload, p)
+            running_send_reply!(Broadcast((payload, rest, new_ns)))
+
+        Broadcast((payload, [BroadcastNode((dest, p)), .. as rest], ns)) ->
+            new_ns = try(send_message!, ns, dest, p)
+            running_send_reply!(Broadcast((payload, rest, new_ns)))
+
+        Read((payload, p, ns)) ->
+            new_ns = try(reply!, ns, payload, p)
+            Ok(new_ns)
+
+        BroadcastNode((payload, [BroadcastNodeOk(p), .. as rest], ns)) ->
+            new_ns = try(reply!, ns, payload, p)
+            running_send_reply!(BroadcastNode((payload, rest, new_ns)))
+
+        BroadcastNode((payload, [BroadcastNode((dest, p)), .. as rest], ns)) ->
+            new_ns = try(send_message!, ns, dest, p)
+            running_send_reply!(BroadcastNode((payload, rest, new_ns)))
+
+        BroadcastNodeOk(ns) ->
+            Ok(ns)
+
+handle_input! : Str, LoopState => Result LoopState _
+handle_input! = |input, loop_state|
+    when loop_state is
         WaitingForInit ->
-            payload : Payload { type : Str, msgId : U64, nodeId : Str, nodeIds : List Str }
-            payload = decodeJSON input
+            payload : Payload { type : Str, msg_id : U64, node_id : Str, node_ids : List Str }
+            payload = decode_json(input)
 
-            stateFromInit : NodeState
-            stateFromInit = State { nodeId: payload.body.nodeId, nodeIds: payload.body.nodeIds, msgId: 0, storage: { messages: Set.empty {}, neighborsMessages: Dict.empty {} } }
+            state_from_init : NodeState
+            state_from_init = State({ node_id: payload.body.node_id, node_ids: payload.body.node_ids, msg_id: 0, storage: { messages: Set.empty({}), neighbors_messages: Dict.empty({}) } })
 
-            nodeState = reply! stateFromInit payload { type: "init_ok", msgId: 0, inReplyTo: 0 }
+            node_state = try(reply!, state_from_init, payload, { type: "init_ok", msg_id: 0, in_reply_to: 0 })
 
-            Task.ok (WaitingForTopology nodeState)
+            Ok(WaitingForTopology(node_state))
 
-        WaitingForTopology nodeState ->
-            payload : Payload { type : Str, msgId : U64, topology : Topology }
-            payload = decodeJSON input
+        WaitingForTopology(node_state) ->
+            payload : Payload { type : Str, msg_id : U64, topology : Topology }
+            payload = decode_json(input)
             body = payload.body
 
-            topologyFromTopology : NodeTopology
-            topologyFromTopology = Topology body.topology
+            topology_from_topology : NodeTopology
+            topology_from_topology = Topology(body.topology)
 
-            (State unwrappedNodeState) = nodeState
+            State(unwrapped_node_state) = node_state
 
             neighbors =
-                when unwrappedNodeState.nodeId is
+                when unwrapped_node_state.node_id is
                     "n0" -> body.topology.n0
                     "n1" -> body.topology.n1
                     "n2" -> body.topology.n2
                     "n3" -> body.topology.n3
                     "n4" -> body.topology.n4
                     n ->
-                        crash "neighbors: $(n)"
+                        crash("neighbors: ${n}")
 
-            neighborsMessages = Dict.fromList (List.map neighbors (\n -> (n, Set.empty {})))
+            neighbors_messages = Dict.from_list(List.map(neighbors, |n| (n, Set.empty({}))))
 
-            newNodeState = reply! nodeState payload { type: "topology_ok", msgId: 0, inReplyTo: 0 }
+            new_node_state = try(reply!, node_state, payload, { type: "topology_ok", msg_id: 0, in_reply_to: 0 })
 
-            (State unwrappedNewNodeState) = newNodeState
-            storage = unwrappedNewNodeState.storage
-            newStorage = { storage & neighborsMessages }
+            State(unwrapped_new_node_state) = new_node_state
+            storage = unwrapped_new_node_state.storage
+            new_storage = { storage & neighbors_messages }
 
-            Task.ok (Running (State { unwrappedNewNodeState & storage: newStorage }) topologyFromTopology)
+            Ok(Running(State({ unwrapped_new_node_state & storage: new_storage }), topology_from_topology))
 
-        Running nodeState topology ->
-            typePayload : Payload { type : Str, msgId : U64 }
-            typePayload = decodeJSON input
-            bodyType = typePayload.body.type
+        Running(node_state, topology) ->
+            type_payload : Payload { type : Str, msg_id : U64 }
+            type_payload = decode_json(input)
+            body_type = type_payload.body.type
 
-            (State unwrappedNodeState) = nodeState
-            storage = unwrappedNodeState.storage
+            State(unwrapped_node_state) = node_state
+            storage = unwrapped_node_state.storage
 
-            replyInfo : [
-                Broadcast (Payload { type : Str, msgId : U64, message : U64 }, List [BroadcastOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, messages : List U64 })], NodeState),
-                Read (Payload { type : Str, msgId : U64 }, { type : Str, msgId : U64, inReplyTo : U64, messages : List U64 }, NodeState),
-                BroadcastNode (Payload { type : Str, msgId : U64, messages : List U64 }, List [BroadcastNodeOk { type : Str, msgId : U64, inReplyTo : U64 }, BroadcastNode (Str, { type : Str, msgId : U64, messages : List U64 })], NodeState),
-                BroadcastNodeOk NodeState,
-            ]
-            replyInfo =
-                when bodyType is
+            reply_info : ReplyInfo
+            reply_info =
+                when body_type is
                     "broadcast" ->
-                        p : Payload { type : Str, msgId : U64, message : U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64, message : U64 }
+                        p = decode_json(input)
                         message = p.body.message
 
-                        updatedNeighborsMessages = storage.neighborsMessages
+                        updated_neighbors_messages = storage.neighbors_messages
 
-                        (messagesToNeighbors, newNeighborsMessages) = Dict.walk
-                            updatedNeighborsMessages
-                            ([], updatedNeighborsMessages)
-                            (\(msgs, nMsgs), k, v ->
+                        (messages_to_neighbors, new_neighbors_messages) = Dict.walk(
+                            updated_neighbors_messages,
+                            ([], updated_neighbors_messages),
+                            |(msgs, n_msgs), k, v|
                                 if
-                                    Set.contains v message
+                                    Set.contains(v, message)
                                 then
-                                    (msgs, nMsgs)
+                                    (msgs, n_msgs)
                                 else
-                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, messages: [message] })), addToDictSet nMsgs k [message])
-                            )
+                                    (List.append(msgs, BroadcastNode((k, { type: "broadcast_node", msg_id: 0, messages: [message] }))), add_to_dict_set(n_msgs, k, [message])),
+                        )
 
-                        newMessages = Set.insert storage.messages message
-                        newStorage = { storage & messages: newMessages, neighborsMessages: newNeighborsMessages }
+                        new_messages = Set.insert(storage.messages, message)
+                        new_storage = { storage & messages: new_messages, neighbors_messages: new_neighbors_messages }
 
-                        Broadcast
-                            (p, List.concat [BroadcastOk { type: "broadcast_ok", msgId: 0, inReplyTo: 0 }] messagesToNeighbors, State { unwrappedNodeState & storage: newStorage })
+                        Broadcast(
+                            (p, List.concat([BroadcastOk({ type: "broadcast_ok", msg_id: 0, in_reply_to: 0 })], messages_to_neighbors), State({ unwrapped_node_state & storage: new_storage })),
+                        )
 
                     "read" ->
-                        p : Payload { type : Str, msgId : U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64 }
+                        p = decode_json(input)
 
-                        Read (p, { type: "read_ok", msgId: 0, inReplyTo: 0, messages: Set.toList storage.messages }, nodeState)
+                        Read((p, { type: "read_ok", msg_id: 0, in_reply_to: 0, messages: Set.to_list(storage.messages) }, node_state))
 
                     "broadcast_node" ->
-                        p : Payload { type : Str, msgId : U64, messages : List U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64, messages : List U64 }
+                        p = decode_json(input)
                         messages = p.body.messages
 
-                        updatedNeighborsMessages = addToDictSet storage.neighborsMessages p.src messages
+                        updated_neighbors_messages = add_to_dict_set(storage.neighbors_messages, p.src, messages)
 
-                        (messagesToNeighbors, newNeighborsMessages) = Dict.walk
-                            updatedNeighborsMessages
-                            ([], updatedNeighborsMessages)
-                            (\(msgs, nMsgs), k, v ->
-                                missingMessages = Set.difference (Set.fromList messages) v
+                        (messages_to_neighbors, new_neighbors_messages) = Dict.walk(
+                            updated_neighbors_messages,
+                            ([], updated_neighbors_messages),
+                            |(msgs, n_msgs), k, v|
+                                missing_messages = Set.difference(Set.from_list(messages), v)
                                 if
-                                    Set.len missingMessages == 0
+                                    Set.len(missing_messages) == 0
                                 then
-                                    (msgs, nMsgs)
+                                    (msgs, n_msgs)
                                 else
-                                    (List.append msgs (BroadcastNode (k, { type: "broadcast_node", msgId: 0, messages: Set.toList missingMessages })), addToDictSet nMsgs k messages)
-                            )
+                                    (List.append(msgs, BroadcastNode((k, { type: "broadcast_node", msg_id: 0, messages: Set.to_list(missing_messages) }))), add_to_dict_set(n_msgs, k, messages)),
+                        )
 
-                        newMessages = Set.union storage.messages (Set.fromList messages)
-                        newStorage = { storage & messages: newMessages, neighborsMessages: newNeighborsMessages }
+                        new_messages = Set.union(storage.messages, Set.from_list(messages))
+                        new_storage = { storage & messages: new_messages, neighbors_messages: new_neighbors_messages }
 
-                        BroadcastNode
-                            (p, List.concat [BroadcastNodeOk { type: "broadcast_node_ok", msgId: 0, inReplyTo: 0 }] messagesToNeighbors, State { unwrappedNodeState & storage: newStorage })
+                        BroadcastNode(
+                            (p, List.concat([BroadcastNodeOk({ type: "broadcast_node_ok", msg_id: 0, in_reply_to: 0 })], messages_to_neighbors), State({ unwrapped_node_state & storage: new_storage })),
+                        )
 
                     "broadcast_node_ok" ->
-                        p : Payload { type : Str, msgId : U64, inReplyTo : U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64, in_reply_to : U64 }
+                        p = decode_json(input)
 
-                        BroadcastNodeOk nodeState
+                        BroadcastNodeOk(node_state)
 
-                    bt -> crash "handlePayload: $(bt)"
+                    bt -> crash("handlePayload: ${bt}")
 
-            newNodeState =
-                Task.loop!
-                    replyInfo
-                    (\info ->
-                        when info is
-                            Broadcast (_, [], ns) | BroadcastNode (_, [], ns) ->
-                                Task.ok (Done ns)
+            new_node_state = try(running_send_reply!, reply_info)
 
-                            Broadcast (payload, [BroadcastOk p, .. as rest], ns) ->
-                                newNs = reply! ns payload p
-                                Task.ok (Step (Broadcast (payload, rest, newNs)))
+            Ok(Running(new_node_state, topology))
 
-                            Broadcast (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
-                                newNs = sendMessage! ns dest p
-                                Task.ok (Step (Broadcast (payload, rest, newNs)))
-
-                            Read (payload, p, ns) ->
-                                newNs = reply! ns payload p
-                                Task.ok (Done newNs)
-
-                            BroadcastNode (payload, [BroadcastNodeOk p, .. as rest], ns) ->
-                                newNs = reply! ns payload p
-                                Task.ok (Step (BroadcastNode (payload, rest, newNs)))
-
-                            BroadcastNode (payload, [BroadcastNode (dest, p), .. as rest], ns) ->
-                                newNs = sendMessage! ns dest p
-                                Task.ok (Step (BroadcastNode (payload, rest, newNs)))
-
-                            BroadcastNodeOk ns ->
-                                Task.ok (Done ns)
-
-                    )
-
-            Task.ok (Running newNodeState topology)
-
-addToDictSet : Dict a (Set b), a, List b -> Dict a (Set b)
-addToDictSet = \dict, k, vs ->
+add_to_dict_set : Dict a (Set b), a, List b -> Dict a (Set b)
+add_to_dict_set = |dict, k, vs|
     entry =
-        when Dict.get dict k is
-            Ok e -> e
-            Err err ->
-                errStr = Inspect.toStr err
-                crash "addToDictSet: $(errStr)"
+        when Dict.get(dict, k) is
+            Ok(e) -> e
+            Err(err) ->
+                err_str = Inspect.to_str(err)
+                crash("addToDictSet: ${err_str}")
 
-    Dict.insert dict k (Set.union entry (Set.fromList vs))
+    Dict.insert(dict, k, Set.union(entry, Set.from_list(vs)))
 
-main =
-    run handleInput
+main! = |_|
+    try(run!, handle_input!)

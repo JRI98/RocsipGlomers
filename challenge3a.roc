@@ -1,11 +1,11 @@
-app [main] {
-    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.16.0/O00IPk-Krg_diNS2dVWlI0ZQP794Vctxzv0ha96mK0E.tar.br",
-    json: "https://github.com/lukewilliamboswell/roc-json/releases/download/0.11.0/z45Wzc-J39TLNweQUoLw3IGZtkQiEN3lTBv3BXErRjQ.tar.br",
+app [main!] {
+    pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.19.0/Hj-J_zxz7V9YurCSTFcFdu6cQJie4guzsPMUi5kBYUk.tar.br",
+    json: "https://github.com/lukewilliamboswell/roc-json/releases/download/0.12.0/1trwx8sltQ-e9Y2rOB4LWUWLS_sFVyETK8Twl0i9qpw.tar.gz",
 }
 
-import Helpers exposing [run, decodeJSON, reply, Payload]
+import Helpers exposing [run!, decode_json, reply!, Payload]
 
-NodeState : [State { nodeId : Str, nodeIds : List Str, msgId : U64, storage : { messages : List U64 } }]
+NodeState : [State { node_id : Str, node_ids : List Str, msg_id : U64, storage : { messages : List U64 } }]
 
 # TODO(https://github.com/roc-lang/roc/issues/5294): Dict Str (List Str)
 Topology : {
@@ -16,75 +16,73 @@ NodeTopology : [Topology Topology]
 
 LoopState : [WaitingForInit, WaitingForTopology NodeState, Running NodeState NodeTopology]
 
-handleInput : Str, LoopState -> Task LoopState _
-handleInput = \input, loopState ->
-    when loopState is
+handle_input! : Str, LoopState => Result LoopState _
+handle_input! = |input, loop_state|
+    when loop_state is
         WaitingForInit ->
-            payload : Payload { type : Str, msgId : U64, nodeId : Str, nodeIds : List Str }
-            payload = decodeJSON input
+            payload : Payload { type : Str, msg_id : U64, node_id : Str, node_ids : List Str }
+            payload = decode_json(input)
             body = payload.body
 
-            stateFromInit : NodeState
-            stateFromInit = State { nodeId: body.nodeId, nodeIds: body.nodeIds, msgId: 0, storage: { messages: [] } }
+            state_from_init : NodeState
+            state_from_init = State({ node_id: body.node_id, node_ids: body.node_ids, msg_id: 0, storage: { messages: [] } })
 
-            nodeState = reply! stateFromInit payload { type: "init_ok", msgId: 0, inReplyTo: 0 }
+            node_state = try(reply!, state_from_init, payload, { type: "init_ok", msg_id: 0, in_reply_to: 0 })
 
-            Task.ok (WaitingForTopology nodeState)
+            Ok(WaitingForTopology(node_state))
 
-        WaitingForTopology nodeState ->
-            payload : Payload { type : Str, msgId : U64, topology : Topology }
-            payload = decodeJSON input
+        WaitingForTopology(node_state) ->
+            payload : Payload { type : Str, msg_id : U64, topology : Topology }
+            payload = decode_json(input)
 
-            topologyFromTopology : NodeTopology
-            topologyFromTopology = Topology payload.body.topology
+            topology_from_topology : NodeTopology
+            topology_from_topology = Topology(payload.body.topology)
 
-            newNodeState = reply! nodeState payload { type: "topology_ok", msgId: 0, inReplyTo: 0 }
+            new_node_state = try(reply!, node_state, payload, { type: "topology_ok", msg_id: 0, in_reply_to: 0 })
 
-            Task.ok (Running newNodeState topologyFromTopology)
+            Ok(Running(new_node_state, topology_from_topology))
 
-        Running nodeState topology ->
-            typePayload : Payload { type : Str, msgId : U64 }
-            typePayload = decodeJSON input
-            bodyType = typePayload.body.type
+        Running(node_state, topology) ->
+            type_payload : Payload { type : Str, msg_id : U64 }
+            type_payload = decode_json(input)
+            body_type = type_payload.body.type
 
-            (State unwrappedNodeState) = nodeState
-            storage = unwrappedNodeState.storage
+            State(unwrapped_node_state) = node_state
+            storage = unwrapped_node_state.storage
 
-            replyInfo : [
-                Broadcast (Payload { type : Str, msgId : U64, message : U64 }, { type : Str, msgId : U64, inReplyTo : U64 }, NodeState),
-                Read (Payload { type : Str, msgId : U64 }, { type : Str, msgId : U64, inReplyTo : U64, messages : List U64 }, NodeState),
+            reply_info : [
+                Broadcast (Payload { type : Str, msg_id : U64, message : U64 }, { type : Str, msg_id : U64, in_reply_to : U64 }, NodeState),
+                Read (Payload { type : Str, msg_id : U64 }, { type : Str, msg_id : U64, in_reply_to : U64, messages : List U64 }, NodeState),
             ]
-            replyInfo =
-                when bodyType is
+            reply_info =
+                when body_type is
                     "broadcast" ->
-                        p : Payload { type : Str, msgId : U64, message : U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64, message : U64 }
+                        p = decode_json(input)
                         body = p.body
 
-                        newMessages = List.append storage.messages body.message
-                        newStorage = { storage & messages: newMessages }
+                        new_messages = List.append(storage.messages, body.message)
+                        new_storage = { storage & messages: new_messages }
 
-                        Broadcast (p, { type: "broadcast_ok", msgId: 0, inReplyTo: 0 }, State { unwrappedNodeState & storage: newStorage })
+                        Broadcast((p, { type: "broadcast_ok", msg_id: 0, in_reply_to: 0 }, State({ unwrapped_node_state & storage: new_storage })))
 
                     "read" ->
-                        p : Payload { type : Str, msgId : U64 }
-                        p = decodeJSON input
+                        p : Payload { type : Str, msg_id : U64 }
+                        p = decode_json(input)
 
-                        Read (p, { type: "read_ok", msgId: 0, inReplyTo: 0, messages: storage.messages }, nodeState)
+                        Read((p, { type: "read_ok", msg_id: 0, in_reply_to: 0, messages: storage.messages }, node_state))
 
-                    bt -> crash "replyInfo: $(bt)"
+                    bt -> crash("replyInfo: ${bt}")
 
-            newNodeStateTask =
-                when replyInfo is
-                    Broadcast (payload, p, ns) ->
-                        reply ns payload p
+            new_node_state =
+                when reply_info is
+                    Broadcast((payload, p, ns)) ->
+                        try(reply!, ns, payload, p)
 
-                    Read (payload, p, ns) ->
-                        reply ns payload p
+                    Read((payload, p, ns)) ->
+                        try(reply!, ns, payload, p)
 
-            newNodeState = newNodeStateTask!
+            Ok(Running(new_node_state, topology))
 
-            Task.ok (Running newNodeState topology)
-
-main =
-    run handleInput
+main! = |_|
+    try(run!, handle_input!)
