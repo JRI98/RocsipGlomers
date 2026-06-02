@@ -5,22 +5,22 @@ app [main!] {
 
 import Helpers exposing [run!, decode_json, reply!, Payload]
 
-NodeState : [State { node_id : Str, node_ids : List Str, msg_id : U64, storage : { messages : List U64 } }]
+NodeState : [State({ node_id : Str, node_ids : List(Str), msg_id : U64, storage : { messages : List(U64) } })]
 
 # TODO(https://github.com/roc-lang/roc/issues/5294): Dict Str (List Str)
 Topology : {
-    n0 : List Str,
+    n0 : List(Str),
 }
 
-NodeTopology : [Topology Topology]
+NodeTopology : [Topology(Topology)]
 
-LoopState : [WaitingForInit, WaitingForTopology NodeState, Running NodeState NodeTopology]
+LoopState : [WaitingForInit, WaitingForTopology(NodeState), Running(NodeState, NodeTopology)]
 
-handle_input! : Str, LoopState => Result LoopState _
-handle_input! = |input, loop_state|
-    when loop_state is
-        WaitingForInit ->
-            payload : Payload { type : Str, msg_id : U64, node_id : Str, node_ids : List Str }
+handle_input! : Str, LoopState => Result(LoopState, _)
+handle_input! = |input, loop_state| {
+    match loop_state {
+        WaitingForInit => {
+            payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
             payload = decode_json(input)
             body = payload.body
 
@@ -30,9 +30,10 @@ handle_input! = |input, loop_state|
             node_state = try(reply!, state_from_init, payload, { type: "init_ok", msg_id: 0, in_reply_to: 0 })
 
             Ok(WaitingForTopology(node_state))
+        }
 
-        WaitingForTopology(node_state) ->
-            payload : Payload { type : Str, msg_id : U64, topology : Topology }
+        WaitingForTopology(node_state) => {
+            payload : Payload({ type : Str, msg_id : U64, topology : Topology })
             payload = decode_json(input)
 
             topology_from_topology : NodeTopology
@@ -41,48 +42,64 @@ handle_input! = |input, loop_state|
             new_node_state = try(reply!, node_state, payload, { type: "topology_ok", msg_id: 0, in_reply_to: 0 })
 
             Ok(Running(new_node_state, topology_from_topology))
+        }
 
-        Running(node_state, topology) ->
-            type_payload : Payload { type : Str, msg_id : U64 }
+        Running(State(unwrapped_node_state), topology) => {
+            type_payload : Payload({ type : Str, msg_id : U64 })
             type_payload = decode_json(input)
             body_type = type_payload.body.type
 
-            State(unwrapped_node_state) = node_state
+            unwrapped_node_state =
+                match node_state {
+                    State(s) => s
+                }
             storage = unwrapped_node_state.storage
 
             reply_info : [
-                Broadcast (Payload { type : Str, msg_id : U64, message : U64 }, { type : Str, msg_id : U64, in_reply_to : U64 }, NodeState),
-                Read (Payload { type : Str, msg_id : U64 }, { type : Str, msg_id : U64, in_reply_to : U64, messages : List U64 }, NodeState),
+                Broadcast(Payload({ type : Str, msg_id : U64, message : U64 }, { type : Str, msg_id : U64, in_reply_to : U64 }), NodeState),
+                Read(Payload({ type : Str, msg_id : U64 }, { type : Str, msg_id : U64, in_reply_to : U64, messages : List(U64) }), NodeState),
             ]
             reply_info =
-                when body_type is
-                    "broadcast" ->
-                        p : Payload { type : Str, msg_id : U64, message : U64 }
+                match body_type {
+                    "broadcast" => {
+                        p : Payload({ type : Str, msg_id : U64, message : U64 })
                         p = decode_json(input)
                         body = p.body
 
                         new_messages = List.append(storage.messages, body.message)
-                        new_storage = { storage & messages: new_messages }
+                        new_storage = { ..storage, messages: new_messages }
 
-                        Broadcast((p, { type: "broadcast_ok", msg_id: 0, in_reply_to: 0 }, State({ unwrapped_node_state & storage: new_storage })))
+                        Broadcast((p, { type: "broadcast_ok", msg_id: 0, in_reply_to: 0 }, State({ ..unwrapped_node_state, storage: new_storage })))
+                    }
 
-                    "read" ->
-                        p : Payload { type : Str, msg_id : U64 }
+                    "read" => {
+                        p : Payload({ type : Str, msg_id : U64 })
                         p = decode_json(input)
 
-                        Read((p, { type: "read_ok", msg_id: 0, in_reply_to: 0, messages: storage.messages }, node_state))
+                        Read((p, { type: "read_ok", msg_id: 0, in_reply_to: 0, messages: storage.messages }, State(unwrapped_node_state)))
+                    }
 
-                    bt -> crash("replyInfo: ${bt}")
+                    bt => {
+                        crash("replyInfo: ${bt}")
+                    }
+                }
 
             new_node_state =
-                when reply_info is
-                    Broadcast((payload, p, ns)) ->
+                match reply_info {
+                    Broadcast((payload, p, ns)) => {
                         try(reply!, ns, payload, p)
+                    }
 
-                    Read((payload, p, ns)) ->
+                    Read((payload, p, ns)) => {
                         try(reply!, ns, payload, p)
+                    }
+                }
 
             Ok(Running(new_node_state, topology))
+        }
+    }
+}
 
-main! = |_|
+main! = |_| {
     try(run!, handle_input!)
+}
