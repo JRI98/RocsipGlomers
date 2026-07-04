@@ -1,76 +1,63 @@
-module [run!, decode_json, reply!, send_message!, Payload]
-
 import pf.Stdin
 import pf.Stdout
 import pf.Stderr
-import json.Json
 
-json_coder = Json.utf8_with({ field_name_mapping: SnakeCase, skip_missing_properties: Bool.true })
+Helpers :: [].{
+	encode_json : a -> Str where [a.encode_to : a, _ -> (_ -> Try(_, _))]
+	encode_json = |a| {
+		match Json.encode(a) {
+			Ok(o) => o
+			Err(_) => {
+				crash "Json.encode(a)"
+			}
+		}
+	}
 
-encode_json : a -> Str where a implements Encoding
-encode_json = |a| {
-    match Str.from_utf8(Encode.to_bytes(a, json_coder)) {
-        Ok(o) => o
-        Err(err) => {
-            err_str = Inspect.to_str(err)
-            crash("encodeJSON: ${err_str}")
-        }
-    }
-}
+	decode_json : Str -> a where [a.parser_for : _ -> (_ -> Try({ value : a, rest : _ }, _))]
+	decode_json = |str| {
+		match Json.parse(str) {
+			Ok(p) => p
+			Err(_) => {
+				crash "Json.parse(str)"
+			}
+		}
+	}
 
-decode_json : Str -> a where a implements Decoding
-decode_json = |str| {
-    match Decode.from_bytes(Str.to_utf8(str), json_coder) {
-        Ok(p) => p
-        Err(err) => {
-            err_str = Inspect.to_str(err)
-            crash("decodeJSON: ${err_str}")
-        }
-    }
-}
+	NodeState(a) : { node_id : Str, msg_id : U64, ..a }
 
-NodeState(a) : [State({ node_id : Str, msg_id : U64 })]a
+	reply! : NodeState(a), Payload({ msg_id : U64, ..t }), { msg_id : U64, in_reply_to : U64, .. } => Try(NodeState(a), _)
+	reply! = |state, msg, body| {
+		send_message!(state, msg.src, { ..body, in_reply_to: msg.body.msg_id })
+	}
 
-reply! : NodeState(a), { src : Str, body : { msg_id : U64 }* }*, { msg_id : U64, in_reply_to : U64 }* => Result(NodeState(a), _)
-reply! = |state, msg, body| {
-    send_message!(state, msg.src, { ..body, in_reply_to: msg.body.msg_id })
-}
+	send_message! : NodeState(a), Str, { msg_id : U64, .. } => Try(NodeState(a), _)
+	send_message! = |state, dest, body| {
+		payload = encode_json({ src: state.node_id, dest, body: { ..body, msg_id: state.msg_id } })
+		Stdout.line!(payload)
+		Ok({ ..state, msg_id: state.msg_id + 1 })
+	}
 
-send_message! : NodeState(a), Str, { msg_id : U64 }* => Result(NodeState(a), _)
-send_message! = |State(state), dest, body| {
-    payload = encode_json(
-        {
-            src: state.node_id,
-            dest,
-            body: { ..body, msg_id: state.msg_id },
-        },
-    )
-    try(Stdout.line!, payload)
+	Payload(body) : {
+		src : Str,
+		dest : Str,
+		body : body,
+	}
 
-    Ok(State({ ..state, msg_id: state.msg_id + 1 }))
-}
+	LoopState(a) : [WaitingForInit, ..a]
 
-Payload(body) : {
-    src : Str,
-    dest : Str,
-    body : body,
-}
+	run! = |handle_input!| {
+		initial_state : LoopState(_)
+		initial_state = WaitingForInit
 
-LoopState(a) : [WaitingForInit]a
+		run_internal!(handle_input!, initial_state)
+	}
 
-run! = |handle_input!| {
-    initial_state : LoopState(_)
-    initial_state = WaitingForInit
+	run_internal! = |handle_input!, state| {
+		line_str = Stdin.line!()
 
-    run_internal!(handle_input!, initial_state)
-}
+		Stderr.line!(line_str)
 
-run_internal! = |handle_input!, state| {
-    line_str = try(Stdin.line!, {})
-
-    try(Stderr.line!, line_str)
-
-    new_state = try(handle_input!, line_str, state)
-
-    run_internal!(handle_input!, new_state)
+		new_state = handle_input!(line_str, state)?
+		run_internal!(handle_input!, new_state)
+	}
 }
