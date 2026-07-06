@@ -3,15 +3,8 @@ import pf.Stdout
 import pf.Stderr
 
 Helpers :: [].{
-	encode_json : a -> Str where [a.encode_to : a, _ -> (_ -> Try(_, _))]
-	encode_json = |a| {
-		match Json.encode(a) {
-			Ok(o) => o
-			Err(_) => {
-				crash "Json.encode(a)"
-			}
-		}
-	}
+	encode_json : a -> Str where [a.encoder_for : _ -> (a, _ -> Try(_, _))]
+	encode_json = |a| Json.to_str(a)
 
 	decode_json : Str -> a where [a.parser_for : _ -> (_ -> Try({ value : a, rest : _ }, _))]
 	decode_json = |str| {
