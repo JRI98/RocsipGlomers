@@ -1,7 +1,8 @@
 app [main!] {
-	pf: platform "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/0.9/8GdFEvQYS3TeAZxKvTzCLVdQiomweGtXcdZkXNDEeABq.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.2/9zUBxb1LtXYVc4eR4hAtd1WQDwBYDhM6HQdZz1UFCm2m.tar.zst",
 }
 
+import pf.IOErr
 import Helpers exposing [run!, decode_json, reply!, Payload]
 
 NodeState : { node_id : Str, node_ids : List(Str), msg_id : U64, storage : { messages : List(U64) } }
@@ -10,7 +11,7 @@ NodeTopology : Dict(Str, (List(Str)))
 
 LoopState : [WaitingForInit, WaitingForTopology(NodeState), Running(NodeState, NodeTopology)]
 
-handle_input! : Str, LoopState => Try(LoopState, _)
+handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr), ..])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
@@ -42,7 +43,7 @@ handle_input! = |input, loop_state| {
 
 			storage = node_state.storage
 
-			new_node_state = 
+			new_node_state =
 				match body_type {
 					"broadcast" => {
 						p : Payload({ type : Str, msg_id : U64, message : U64 })

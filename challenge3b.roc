@@ -1,7 +1,8 @@
 app [main!] {
-	pf: platform "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/0.9/8GdFEvQYS3TeAZxKvTzCLVdQiomweGtXcdZkXNDEeABq.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.2/9zUBxb1LtXYVc4eR4hAtd1WQDwBYDhM6HQdZz1UFCm2m.tar.zst",
 }
 
+import pf.IOErr
 import Helpers exposing [run!, decode_json, reply!, send_message!, Payload]
 
 NodeState : { node_id : Str, node_ids : List(Str), msg_id : U64, storage : { messages : Set(U64), neighbors_messages : Dict(Str, Set(U64)) } }
@@ -10,7 +11,7 @@ NodeTopology : Dict(Str, (List(Str)))
 
 LoopState : [WaitingForInit, WaitingForTopology(NodeState), Running(NodeState, NodeTopology)]
 
-handle_input! : Str, LoopState => Try(LoopState, _)
+handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr), ..])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
@@ -29,7 +30,7 @@ handle_input! = |input, loop_state| {
 			payload : Payload({ type : Str, msg_id : U64, topology : NodeTopology })
 			payload = decode_json(input)
 
-			neighbors = 
+			neighbors =
 				match Dict.get(payload.body.topology, node_state.node_id) {
 					Ok(n) => n
 					Err(_) => {
@@ -50,7 +51,7 @@ handle_input! = |input, loop_state| {
 			type_payload : Payload({ type : Str, msg_id : U64 })
 			type_payload = decode_json(input)
 
-			new_node_state = 
+			new_node_state =
 				match type_payload.body.type {
 					"broadcast" => {
 						p : Payload({ type : Str, msg_id : U64, message : U64 })
@@ -136,13 +137,9 @@ handle_input! = |input, loop_state| {
 }
 
 add_to_dict_set : Dict(a, Set(b)), a, b -> Dict(a, Set(b))
-	where [
-		a.is_eq : a, a -> Bool,
-		a.to_hash : a, Hasher -> Hasher,
-		b.is_eq : b, b -> Bool,
-	]
+	where [a.is_eq : _, a.to_hash : _, b.is_eq : _, b.to_hash : _]
 add_to_dict_set = |dict, k, v| {
-	entry = 
+	entry =
 		match Dict.get(dict, k) {
 			Ok(e) => e
 			Err(_) => {

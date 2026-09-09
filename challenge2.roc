@@ -1,14 +1,15 @@
 app [main!] {
-	pf: platform "https://github.com/lukewilliamboswell/roc-platform-template-zig/releases/download/0.9/8GdFEvQYS3TeAZxKvTzCLVdQiomweGtXcdZkXNDEeABq.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.2/9zUBxb1LtXYVc4eR4hAtd1WQDwBYDhM6HQdZz1UFCm2m.tar.zst",
 }
 
+import pf.IOErr
 import Helpers exposing [run!, decode_json, reply!, Payload]
 
 NodeState : { node_id : Str, node_ids : List(Str), msg_id : U64 }
 
 LoopState : [WaitingForInit, Running(NodeState)]
 
-handle_input! : Str, LoopState => Try(LoopState, _)
+handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr), ..])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
