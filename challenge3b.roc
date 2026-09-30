@@ -1,5 +1,5 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.22.2/9zUBxb1LtXYVc4eR4hAtd1WQDwBYDhM6HQdZz1UFCm2m.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0/GNN5tt2gKdX4dhawg4915C4YB193woHFdcCkz31fhGxv.tar.zst",
 }
 
 import pf.IOErr
@@ -11,7 +11,7 @@ NodeTopology : Dict(Str, (List(Str)))
 
 LoopState : [WaitingForInit, WaitingForTopology(NodeState), Running(NodeState, NodeTopology)]
 
-handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr), ..])
+handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
