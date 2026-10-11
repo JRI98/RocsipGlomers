@@ -18,12 +18,8 @@ Helpers :: [].{
 
 	NodeState(a) : { node_id : Str, msg_id : U64, ..a }
 
-	reply! = |state, msg, body| {
-		send_message!(state, msg.src, { ..body, in_reply_to: msg.body.msg_id })
-	}
-
 	send_message! = |state, dest, body| {
-		payload = encode_json({ src: state.node_id, dest, body: { ..body, msg_id: state.msg_id } })
+		payload = encode_json({ src: state.node_id, dest, body })
 		Stdout.line!(payload)?
 		Ok({ ..state, msg_id: state.msg_id + 1 })
 	}

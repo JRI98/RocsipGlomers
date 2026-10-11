@@ -1,9 +1,9 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.23.0/GNN5tt2gKdX4dhawg4915C4YB193woHFdcCkz31fhGxv.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.25.0/CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA.tar.zst",
 }
 
 import pf.IOErr
-import Helpers exposing [run!, decode_json, reply!, send_message!, Payload]
+import Helpers exposing [Payload, decode_json, run!, send_message!]
 
 NodeState : { node_id : Str, node_ids : List(Str), msg_id : U64, storage : { messages : Set(U64), neighbors_messages : Dict(Str, Set(U64)) } }
 
@@ -21,7 +21,11 @@ handle_input! = |input, loop_state| {
 			state_from_init : NodeState
 			state_from_init = { node_id: payload.body.node_id, node_ids: payload.body.node_ids, msg_id: 0, storage: { messages: Set.empty(), neighbors_messages: Dict.empty() } }
 
-			node_state = reply!(state_from_init, payload, { msg_id: 0, in_reply_to: 0, type: "init_ok" })?
+			node_state = send_message!(
+				state_from_init,
+				payload.src,
+				{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
+			)?
 
 			Ok(WaitingForTopology(node_state))
 		}
@@ -40,7 +44,11 @@ handle_input! = |input, loop_state| {
 
 			neighbors_messages = Dict.from_list(List.map(neighbors, |n| (n, Set.empty())))
 
-			new_node_state = reply!(node_state, payload, { msg_id: 0, in_reply_to: 0, type: "topology_ok" })?
+			new_node_state = send_message!(
+				node_state,
+				payload.src,
+				{ msg_id: node_state.msg_id, in_reply_to: payload.body.msg_id, type: "topology_ok" },
+			)?
 
 			new_storage = { ..new_node_state.storage, neighbors_messages }
 
@@ -60,26 +68,31 @@ handle_input! = |input, loop_state| {
 
 						updated_neighbors_messages = node_state.storage.neighbors_messages
 
-						(messages_to_neighbors, new_neighbors_messages) = Dict.fold(
+						(neighbors_to_broadcast, new_neighbors_messages) = Dict.fold(
 							updated_neighbors_messages,
 							([], updated_neighbors_messages),
-							|(msgs, n_msgs), k, v| {
+							|(neighbors_list, n_msgs), k, v| {
 								if Set.contains(v, message) {
-									(msgs, n_msgs)
+									(neighbors_list, n_msgs)
 								} else {
-									(List.append(msgs, (k, { msg_id: 0, message: message, type: "broadcast_node" })), add_to_dict_set(n_msgs, k, message))
+									(List.append(neighbors_list, k), add_to_dict_set(n_msgs, k, message))
 								}
 							},
 						)
 
 						new_messages = Set.insert(node_state.storage.messages, message)
 						new_storage = { ..node_state.storage, messages: new_messages, neighbors_messages: new_neighbors_messages }
+						state_with_storage = { ..node_state, storage: new_storage }
 
-						ns_after_reply = reply!({ ..node_state, storage: new_storage }, p, { msg_id: 0, in_reply_to: 0, type: "broadcast_ok" })?
+						ns_after_reply = send_message!(
+							state_with_storage,
+							p.src,
+							{ msg_id: state_with_storage.msg_id, in_reply_to: p.body.msg_id, type: "broadcast_ok" },
+						)?
 
 						var $ns = ns_after_reply
-						for (neighbor, msg) in messages_to_neighbors {
-							$ns = send_message!($ns, neighbor, msg)?
+						for neighbor in neighbors_to_broadcast {
+							$ns = send_message!($ns, neighbor, { msg_id: $ns.msg_id, message: message, type: "broadcast_node" })?
 						}
 						$ns
 					}
@@ -88,7 +101,11 @@ handle_input! = |input, loop_state| {
 						p : Payload({ type : Str, msg_id : U64 })
 						p = decode_json(input)
 
-						reply!(node_state, p, { msg_id: 0, in_reply_to: 0, messages: Set.to_list(node_state.storage.messages), type: "read_ok" })?
+						send_message!(
+							node_state,
+							p.src,
+							{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, messages: Set.to_list(node_state.storage.messages), type: "read_ok" },
+						)?
 					}
 
 					"broadcast_node" => {
@@ -98,26 +115,31 @@ handle_input! = |input, loop_state| {
 
 						updated_neighbors_messages = add_to_dict_set(node_state.storage.neighbors_messages, p.src, message)
 
-						(messages_to_neighbors, new_neighbors_messages) = Dict.fold(
+						(neighbors_to_broadcast, new_neighbors_messages) = Dict.fold(
 							updated_neighbors_messages,
 							([], updated_neighbors_messages),
-							|(msgs, n_msgs), k, v| {
+							|(neighbors_list, n_msgs), k, v| {
 								if Set.contains(v, message) {
-									(msgs, n_msgs)
+									(neighbors_list, n_msgs)
 								} else {
-									(List.append(msgs, (k, { msg_id: 0, message: message, type: "broadcast_node" })), add_to_dict_set(n_msgs, k, message))
+									(List.append(neighbors_list, k), add_to_dict_set(n_msgs, k, message))
 								}
 							},
 						)
 
 						new_messages = Set.insert(node_state.storage.messages, message)
 						new_storage = { ..node_state.storage, messages: new_messages, neighbors_messages: new_neighbors_messages }
+						state_with_storage = { ..node_state, storage: new_storage }
 
-						ns_after_reply = reply!({ ..node_state, storage: new_storage }, p, { msg_id: 0, in_reply_to: 0, type: "broadcast_node_ok" })?
+						ns_after_reply = send_message!(
+							state_with_storage,
+							p.src,
+							{ msg_id: state_with_storage.msg_id, in_reply_to: p.body.msg_id, type: "broadcast_node_ok" },
+						)?
 
 						var $ns = ns_after_reply
-						for (neighbor, msg) in messages_to_neighbors {
-							$ns = send_message!($ns, neighbor, msg)?
+						for neighbor in neighbors_to_broadcast {
+							$ns = send_message!($ns, neighbor, { msg_id: $ns.msg_id, message: message, type: "broadcast_node" })?
 						}
 						$ns
 					}
