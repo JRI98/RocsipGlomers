@@ -30,21 +30,12 @@ Helpers :: [].{
 		body : body,
 	}
 
-	LoopState(a) : [WaitingForInit, ..a]
-
-	run! = |handle_input!| {
-		initial_state : LoopState(_)
-		initial_state = WaitingForInit
-
-		run_internal!(handle_input!, initial_state)
-	}
-
-	run_internal! = |handle_input!, state| {
+	run! = |handle_input!, state| {
 		line_str = Stdin.line!()?
 
 		Stderr.line!(line_str)?
 
 		new_state = handle_input!(line_str, state)?
-		run_internal!(handle_input!, new_state)
+		run!(handle_input!, new_state)
 	}
 }

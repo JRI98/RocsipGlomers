@@ -15,11 +15,6 @@ NodeState : {
 	ticker : List(Child),
 }
 
-LoopState : [
-	WaitingForInit,
-	Running(NodeState),
-]
-
 get_node_value : Dict(Str, U64), Str -> U64
 get_node_value = |cached, id| {
 	match Dict.get(cached, id) {
@@ -61,107 +56,108 @@ sync_seq_kv! = |state| {
 	Ok($curr)
 }
 
-handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
-handle_input! = |input, loop_state| {
-	match loop_state {
-		WaitingForInit => {
-			payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
-			payload = decode_json(input)
+handle_input! : Str, NodeState => Try(NodeState, [StdoutErr(IOErr)])
+handle_input! = |input, node_state| {
+	type_payload : Payload({ type : Str })
+	type_payload = decode_json(input)
 
-			cmd_str = "while true; do sleep 1; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
-			cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
-			ticker =
-				match Cmd.spawn!(cmd) {
-					Ok(c) => [c]
-					Err(_) => []
+	new_node_state =
+		match type_payload.body.type {
+			"init" => {
+				payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
+				payload = decode_json(input)
+
+				cmd_str = "while true; do sleep 1; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
+				cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
+				ticker =
+					match Cmd.spawn!(cmd) {
+						Ok(c) => [c]
+						Err(_) => []
+					}
+
+				state_from_init = {
+					..node_state,
+					node_id: payload.body.node_id,
+					all_nodes: payload.body.node_ids,
+					ticker,
 				}
 
-			state_from_init : NodeState
-			state_from_init = {
-				node_id: payload.body.node_id,
-				all_nodes: payload.body.node_ids,
-				msg_id: 0,
-				cached_values: Dict.empty(),
-				pending_reads: Dict.empty(),
-				ticker,
+				send_message!(
+					state_from_init,
+					payload.src,
+					{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
+				)?
 			}
 
-			node_state = send_message!(
-				state_from_init,
-				payload.src,
-				{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
-			)?
+			"add" => {
+				p : Payload({ msg_id : U64, delta : U64 })
+				p = decode_json(input)
 
-			Ok(Running(node_state))
-		}
+				current = get_node_value(node_state.cached_values, node_state.node_id)
+				new_cached = Dict.insert(node_state.cached_values, node_state.node_id, current + p.body.delta)
+				state_with_val = { ..node_state, cached_values: new_cached }
 
-		Running(node_state) => {
-			type_payload : Payload({ type : Str })
-			type_payload = decode_json(input)
+				send_message!(
+					state_with_val,
+					p.src,
+					{ msg_id: state_with_val.msg_id, in_reply_to: p.body.msg_id, type: "add_ok" },
+				)?
+			}
 
-			new_node_state =
-				match type_payload.body.type {
-					"add" => {
-						p : Payload({ msg_id : U64, delta : U64 })
-						p = decode_json(input)
+			"read" => {
+				p : Payload({ msg_id : U64 })
+				p = decode_json(input)
 
-						current = get_node_value(node_state.cached_values, node_state.node_id)
-						new_cached = Dict.insert(node_state.cached_values, node_state.node_id, current + p.body.delta)
-						state_with_val = { ..node_state, cached_values: new_cached }
+				total_value = compute_total(node_state)
 
-						send_message!(
-							state_with_val,
-							p.src,
-							{ msg_id: state_with_val.msg_id, in_reply_to: p.body.msg_id, type: "add_ok" },
-						)?
-					}
+				send_message!(
+					node_state,
+					p.src,
+					{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "read_ok", value: total_value },
+				)?
+			}
 
-					"read" => {
-						p : Payload({ msg_id : U64 })
-						p = decode_json(input)
+			"read_ok" => {
+				p : Payload({ in_reply_to : U64, value : U64 })
+				p = decode_json(input)
 
-						total_value = compute_total(node_state)
-
-						send_message!(
-							node_state,
-							p.src,
-							{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "read_ok", value: total_value },
-						)?
-					}
-
-					"read_ok" => {
-						p : Payload({ in_reply_to : U64, value : U64 })
-						p = decode_json(input)
-
-						match Dict.get(node_state.pending_reads, p.body.in_reply_to) {
-							Ok(peer_id) => {
-								old_val = get_node_value(node_state.cached_values, peer_id)
-								new_val = if p.body.value > old_val {
-									p.body.value
-								} else {
-									old_val
-								}
-								new_cached = Dict.insert(node_state.cached_values, peer_id, new_val)
-								new_pending = Dict.remove(node_state.pending_reads, p.body.in_reply_to)
-								{ ..node_state, cached_values: new_cached, pending_reads: new_pending }
-							}
-
-							Err(_) => node_state
+				match Dict.get(node_state.pending_reads, p.body.in_reply_to) {
+					Ok(peer_id) => {
+						old_val = get_node_value(node_state.cached_values, peer_id)
+						new_val = if p.body.value > old_val {
+							p.body.value
+						} else {
+							old_val
 						}
+						new_cached = Dict.insert(node_state.cached_values, peer_id, new_val)
+						new_pending = Dict.remove(node_state.pending_reads, p.body.in_reply_to)
+						{ ..node_state, cached_values: new_cached, pending_reads: new_pending }
 					}
 
-					"tick" => {
-						sync_seq_kv!(node_state)?
-					}
-
-					_ => node_state
+					Err(_) => node_state
 				}
+			}
 
-			Ok(Running(new_node_state))
+			"tick" => {
+				sync_seq_kv!(node_state)?
+			}
+
+			_ => node_state
 		}
-	}
+
+	Ok(new_node_state)
 }
 
 main! = |_| {
-	run!(handle_input!)
+	run!(
+		handle_input!,
+		{
+			node_id: "",
+			all_nodes: [],
+			msg_id: 0,
+			cached_values: Dict.empty(),
+			pending_reads: Dict.empty(),
+			ticker: [],
+		},
+	)
 }

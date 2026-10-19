@@ -15,11 +15,6 @@ NodeState : {
 	ticker : List(Child),
 }
 
-LoopState : [
-	WaitingForInit,
-	Running(NodeState),
-]
-
 gossip_to_peers! : NodeState => Try(NodeState, [StdoutErr(IOErr)])
 gossip_to_peers! = |state| {
 	var $ns = state
@@ -51,125 +46,127 @@ add_to_acked = |acked, peer, msgs| {
 	Dict.insert(acked, peer, Set.union(current, Set.from_list(msgs)))
 }
 
-handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
-handle_input! = |input, loop_state| {
-	match loop_state {
-		WaitingForInit => {
-			payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
-			payload = decode_json(input)
+handle_input! : Str, NodeState => Try(NodeState, [StdoutErr(IOErr)])
+handle_input! = |input, node_state| {
+	type_payload : Payload({ type : Str })
+	type_payload = decode_json(input)
 
-			peers = List.drop_if(payload.body.node_ids, |id| id == payload.body.node_id)
-			acked = Dict.from_list(List.map(peers, |p| (p, Set.empty())))
+	new_node_state =
+		match type_payload.body.type {
+			"init" => {
+				payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
+				payload = decode_json(input)
 
-			cmd_str = "while true; do sleep 0.5; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
-			cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
-			ticker =
-				match Cmd.spawn!(cmd) {
-					Ok(c) => [c]
-					Err(_) => []
+				peers = List.drop_if(payload.body.node_ids, |id| id == payload.body.node_id)
+				acked = Dict.from_list(List.map(peers, |p| (p, Set.empty())))
+
+				cmd_str = "while true; do sleep 0.5; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
+				cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
+				ticker =
+					match Cmd.spawn!(cmd) {
+						Ok(c) => [c]
+						Err(_) => []
+					}
+
+				state_from_init = {
+					..node_state,
+					node_id: payload.body.node_id,
+					peers,
+					acked,
+					ticker,
 				}
 
-			state_from_init : NodeState
-			state_from_init = {
-				node_id: payload.body.node_id,
-				peers,
-				msg_id: 0,
-				messages: Set.empty(),
-				acked,
-				ticker,
+				send_message!(
+					state_from_init,
+					payload.src,
+					{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
+				)?
 			}
 
-			node_state = send_message!(
-				state_from_init,
-				payload.src,
-				{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
-			)?
+			"topology" => {
+				p : Payload({ msg_id : U64 })
+				p = decode_json(input)
 
-			Ok(Running(node_state))
+				send_message!(
+					node_state,
+					p.src,
+					{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "topology_ok" },
+				)?
+			}
+
+			"broadcast" => {
+				p : Payload({ type : Str, msg_id : U64, message : U64 })
+				p = decode_json(input)
+
+				state_with_msg = { ..node_state, messages: Set.insert(node_state.messages, p.body.message) }
+
+				ns_after_reply = send_message!(
+					state_with_msg,
+					p.src,
+					{ msg_id: state_with_msg.msg_id, in_reply_to: p.body.msg_id, type: "broadcast_ok" },
+				)?
+
+				gossip_to_peers!(ns_after_reply)?
+			}
+
+			"read" => {
+				p : Payload({ type : Str, msg_id : U64 })
+				p = decode_json(input)
+
+				send_message!(
+					node_state,
+					p.src,
+					{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "read_ok", messages: Set.to_list(node_state.messages) },
+				)?
+			}
+
+			"gossip" => {
+				p : Payload({ type : Str, msg_id : U64, messages : List(U64) })
+				p = decode_json(input)
+
+				new_messages = Set.union(node_state.messages, Set.from_list(p.body.messages))
+				new_acked = add_to_acked(node_state.acked, p.src, p.body.messages)
+				state_with_msgs = { ..node_state, messages: new_messages, acked: new_acked }
+
+				ns_after_reply = send_message!(
+					state_with_msgs,
+					p.src,
+					{ msg_id: state_with_msgs.msg_id, in_reply_to: p.body.msg_id, type: "gossip_ok", messages: p.body.messages },
+				)?
+
+				gossip_to_peers!(ns_after_reply)?
+			}
+
+			"gossip_ok" => {
+				p : Payload({ type : Str, messages : List(U64) })
+				p = decode_json(input)
+
+				new_acked = add_to_acked(node_state.acked, p.src, p.body.messages)
+				{ ..node_state, acked: new_acked }
+			}
+
+			"tick" => {
+				gossip_to_peers!(node_state)?
+			}
+
+			_ => {
+				node_state
+			}
 		}
 
-		Running(node_state) => {
-			type_payload : Payload({ type : Str })
-			type_payload = decode_json(input)
-
-			new_node_state =
-				match type_payload.body.type {
-					"topology" => {
-						p : Payload({ msg_id : U64 })
-						p = decode_json(input)
-
-						send_message!(
-							node_state,
-							p.src,
-							{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "topology_ok" },
-						)?
-					}
-
-					"broadcast" => {
-						p : Payload({ type : Str, msg_id : U64, message : U64 })
-						p = decode_json(input)
-
-						state_with_msg = { ..node_state, messages: Set.insert(node_state.messages, p.body.message) }
-
-						ns_after_reply = send_message!(
-							state_with_msg,
-							p.src,
-							{ msg_id: state_with_msg.msg_id, in_reply_to: p.body.msg_id, type: "broadcast_ok" },
-						)?
-
-						gossip_to_peers!(ns_after_reply)?
-					}
-
-					"read" => {
-						p : Payload({ type : Str, msg_id : U64 })
-						p = decode_json(input)
-
-						send_message!(
-							node_state,
-							p.src,
-							{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "read_ok", messages: Set.to_list(node_state.messages) },
-						)?
-					}
-
-					"gossip" => {
-						p : Payload({ type : Str, msg_id : U64, messages : List(U64) })
-						p = decode_json(input)
-
-						new_messages = Set.union(node_state.messages, Set.from_list(p.body.messages))
-						new_acked = add_to_acked(node_state.acked, p.src, p.body.messages)
-						state_with_msgs = { ..node_state, messages: new_messages, acked: new_acked }
-
-						ns_after_reply = send_message!(
-							state_with_msgs,
-							p.src,
-							{ msg_id: state_with_msgs.msg_id, in_reply_to: p.body.msg_id, type: "gossip_ok", messages: p.body.messages },
-						)?
-
-						gossip_to_peers!(ns_after_reply)?
-					}
-
-					"gossip_ok" => {
-						p : Payload({ type : Str, messages : List(U64) })
-						p = decode_json(input)
-
-						new_acked = add_to_acked(node_state.acked, p.src, p.body.messages)
-						{ ..node_state, acked: new_acked }
-					}
-
-					"tick" => {
-						gossip_to_peers!(node_state)?
-					}
-
-					_ => {
-						node_state
-					}
-				}
-
-			Ok(Running(new_node_state))
-		}
-	}
+	Ok(new_node_state)
 }
 
 main! = |_| {
-	run!(handle_input!)
+	run!(
+		handle_input!,
+		{
+			node_id: "",
+			peers: [],
+			msg_id: 0,
+			messages: Set.empty(),
+			acked: Dict.empty(),
+			ticker: [],
+		},
+	)
 }
