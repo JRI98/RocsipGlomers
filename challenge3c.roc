@@ -8,7 +8,6 @@ import Helpers exposing [Payload, decode_json, run!, send_message!]
 
 NodeState : {
 	node_id : Str,
-	node_ids : List(Str),
 	peers : List(Str),
 	msg_id : U64,
 	messages : Set(U64),
@@ -73,7 +72,6 @@ handle_input! = |input, loop_state| {
 			state_from_init : NodeState
 			state_from_init = {
 				node_id: payload.body.node_id,
-				node_ids: payload.body.node_ids,
 				peers,
 				msg_id: 0,
 				messages: Set.empty(),
@@ -155,9 +153,7 @@ handle_input! = |input, loop_state| {
 						p = decode_json(input)
 
 						new_acked = add_to_acked(node_state.acked, p.src, p.body.messages)
-						state_with_acked = { ..node_state, acked: new_acked }
-
-						gossip_to_peers!(state_with_acked)?
+						{ ..node_state, acked: new_acked }
 					}
 
 					"tick" => {

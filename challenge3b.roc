@@ -107,10 +107,6 @@ handle_input! = |input, loop_state| {
 						}
 					}
 
-					"broadcast_node_ok" => {
-						node_state
-					}
-
 					"read" => {
 						p : Payload({ msg_id : U64 })
 						p = decode_json(input)

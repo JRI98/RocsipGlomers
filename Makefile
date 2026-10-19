@@ -1,6 +1,6 @@
-.PHONY: all fmt mkdir_build challenge1 challenge2 challenge3a challenge3b challenge3c challenge3d challenge3e serve # challenge4 challenge5a challenge5b challenge5c challenge6a challenge6b challenge6c
+.PHONY: all fmt mkdir_build challenge1 challenge2 challenge3a challenge3b challenge3c challenge3d challenge3e challenge4 serve # challenge5a challenge5b challenge5c challenge6a challenge6b challenge6c
 
-all: fmt challenge1 challenge2 challenge3a challenge3b challenge3c challenge3d challenge3e
+all: fmt challenge1 challenge2 challenge3a challenge3b challenge3c challenge3d challenge3e challenge4
 
 fmt:
 	roc fmt .
@@ -44,9 +44,9 @@ challenge3e: mkdir_build
 	./maelstrom/maelstrom test -w broadcast --bin build/challenge3e --node-count 25 --time-limit 20 --rate 100 --latency 100
 
 # https://fly.io/dist-sys/4/
-# challenge4: mkdir_build
-# 	roc build --output=build/challenge4 challenge4.roc
-#	./maelstrom/maelstrom test -w g-counter --bin build/challenge4 --node-count 3 --rate 100 --time-limit 20 --nemesis partition
+challenge4: mkdir_build
+	roc build --output=build/challenge4 challenge4.roc
+	./maelstrom/maelstrom test -w g-counter --bin build/challenge4 --node-count 3 --rate 100 --time-limit 20 --nemesis partition
 
 # https://fly.io/dist-sys/5a/
 # challenge5a: mkdir_build

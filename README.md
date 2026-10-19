@@ -22,6 +22,7 @@ tar -xf maelstrom.tar.bz2 && rm maelstrom.tar.bz2
 | [3c. Fault-Tolerant Broadcast](file:///Users/joaoimperadeiro/projects/GossipGlomers/roc/challenge3c.roc) | `broadcast` (nemesis partition) | `make challenge3c` | Passed |
 | [3d. Efficient Broadcast I](file:///Users/joaoimperadeiro/projects/GossipGlomers/roc/challenge3d.roc) | `broadcast` (25 nodes, 100ms latency) | `make challenge3d` | Passed |
 | [3e. Efficient Broadcast II](file:///Users/joaoimperadeiro/projects/GossipGlomers/roc/challenge3e.roc) | `broadcast` (25 nodes, batched) | `make challenge3e` | Passed |
+| [4. Grow-Only Counter](file:///Users/joaoimperadeiro/projects/GossipGlomers/roc/challenge4.roc) | `g-counter` (nemesis partition) | `make challenge4` | Passed |
 
 ## Commands
 
