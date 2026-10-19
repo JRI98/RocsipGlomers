@@ -5,15 +5,21 @@ app [main!] {
 import pf.IOErr
 import Helpers exposing [Payload, decode_json, run!, send_message!]
 
-NodeState : { node_id : Str, msg_id : U64 }
+NodeState : {
+	node_id : Str,
+	msg_id : U64,
+}
 
-LoopState : [WaitingForInit, Running(NodeState)]
+LoopState : [
+	WaitingForInit,
+	Running(NodeState),
+]
 
 handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
-			payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
+			payload : Payload({ type : Str, msg_id : U64, node_id : Str })
 			payload = decode_json(input)
 
 			state_from_init : NodeState

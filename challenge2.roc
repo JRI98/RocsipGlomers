@@ -5,19 +5,25 @@ app [main!] {
 import pf.IOErr
 import Helpers exposing [Payload, decode_json, run!, send_message!]
 
-NodeState : { node_id : Str, node_ids : List(Str), msg_id : U64 }
+NodeState : {
+	node_id : Str,
+	msg_id : U64,
+}
 
-LoopState : [WaitingForInit, Running(NodeState)]
+LoopState : [
+	WaitingForInit,
+	Running(NodeState),
+]
 
 handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
-			payload : Payload({ type : Str, msg_id : U64, node_id : Str, node_ids : List(Str) })
+			payload : Payload({ type : Str, msg_id : U64, node_id : Str })
 			payload = decode_json(input)
 
 			state_from_init : NodeState
-			state_from_init = { node_id: payload.body.node_id, node_ids: payload.body.node_ids, msg_id: 0 }
+			state_from_init = { node_id: payload.body.node_id, msg_id: 0 }
 
 			node_state = send_message!(
 				state_from_init,
@@ -39,7 +45,7 @@ handle_input! = |input, loop_state| {
 					msg_id: node_state.msg_id,
 					in_reply_to: payload.body.msg_id,
 					type: "generate_ok",
-					id: Str.concat(payload.src, U64.to_str(payload.body.msg_id)),
+					id: "${node_state.node_id}-${node_state.msg_id.to_str()}",
 				},
 			)?
 
