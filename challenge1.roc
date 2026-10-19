@@ -19,23 +19,20 @@ handle_input! : Str, LoopState => Try(LoopState, [StdoutErr(IOErr)])
 handle_input! = |input, loop_state| {
 	match loop_state {
 		WaitingForInit => {
-			payload : Payload({ type : Str, msg_id : U64, node_id : Str })
+			payload : Payload({ msg_id : U64, node_id : Str })
 			payload = decode_json(input)
 
-			state_from_init : NodeState
-			state_from_init = { node_id: payload.body.node_id, msg_id: 0 }
-
 			node_state = send_message!(
-				state_from_init,
+				{ node_id: payload.body.node_id, msg_id: 0 },
 				payload.src,
-				{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
+				{ msg_id: 0, in_reply_to: payload.body.msg_id, type: "init_ok" },
 			)?
 
 			Ok(Running(node_state))
 		}
 
 		Running(node_state) => {
-			payload : Payload({ type : Str, msg_id : U64, echo : Str })
+			payload : Payload({ msg_id : U64, echo : Str })
 			payload = decode_json(input)
 
 			new_node_state = send_message!(

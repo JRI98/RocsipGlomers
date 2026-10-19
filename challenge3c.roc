@@ -18,7 +18,6 @@ NodeState : {
 
 LoopState : [
 	WaitingForInit,
-	WaitingForTopology(NodeState),
 	Running(NodeState),
 ]
 
@@ -88,20 +87,7 @@ handle_input! = |input, loop_state| {
 				{ msg_id: state_from_init.msg_id, in_reply_to: payload.body.msg_id, type: "init_ok" },
 			)?
 
-			Ok(WaitingForTopology(node_state))
-		}
-
-		WaitingForTopology(node_state) => {
-			payload : Payload({ type : Str, msg_id : U64 })
-			payload = decode_json(input)
-
-			new_node_state = send_message!(
-				node_state,
-				payload.src,
-				{ msg_id: node_state.msg_id, in_reply_to: payload.body.msg_id, type: "topology_ok" },
-			)?
-
-			Ok(Running(new_node_state))
+			Ok(Running(node_state))
 		}
 
 		Running(node_state) => {
@@ -110,6 +96,17 @@ handle_input! = |input, loop_state| {
 
 			new_node_state =
 				match type_payload.body.type {
+					"topology" => {
+						p : Payload({ msg_id : U64 })
+						p = decode_json(input)
+
+						send_message!(
+							node_state,
+							p.src,
+							{ msg_id: node_state.msg_id, in_reply_to: p.body.msg_id, type: "topology_ok" },
+						)?
+					}
+
 					"broadcast" => {
 						p : Payload({ type : Str, msg_id : U64, message : U64 })
 						p = decode_json(input)
