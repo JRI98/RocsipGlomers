@@ -1,5 +1,5 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.25.0/CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst",
 }
 
 import pf.IOErr
@@ -37,7 +37,7 @@ tree_neighbors = |node_id, node_ids| {
 	List.concat(parent, children)
 }
 
-gossip_to_neighbors! : NodeState, Str => Try(NodeState, [StdoutErr(IOErr)])
+gossip_to_neighbors! : NodeState, Str => Try(NodeState, [Interrupted, StdoutErr(IOErr)])
 gossip_to_neighbors! = |state, exclude| {
 	var $ns = state
 	for neighbor in state.neighbors {
@@ -70,7 +70,7 @@ add_to_acked = |acked, peer, msgs| {
 	Dict.insert(acked, peer, Set.union(current, Set.from_list(msgs)))
 }
 
-handle_input! : Str, NodeState => Try(NodeState, [StdoutErr(IOErr)])
+handle_input! : Str, NodeState => Try(NodeState, [Interrupted, StdoutErr(IOErr)])
 handle_input! = |input, node_state| {
 	type_payload : Payload({ type : Str })
 	type_payload = decode_json(input)
@@ -85,9 +85,9 @@ handle_input! = |input, node_state| {
 				acked = Dict.from_list(List.map(neighbors, |n| (n, Set.empty())))
 
 				cmd_str = "while true; do sleep 0.15; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
-				cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
+				cmd = Cmd.new("sh").args(["-c", cmd_str]).manage_tree(True)
 				ticker =
-					match Cmd.spawn!(cmd) {
+					match cmd.spawn!() {
 						Ok(c) => [c]
 						Err(_) => []
 					}

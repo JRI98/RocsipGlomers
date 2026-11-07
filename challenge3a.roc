@@ -1,5 +1,5 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.25.0/CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst",
 }
 
 import pf.IOErr
@@ -11,7 +11,7 @@ NodeState : {
 	messages : Set(U64),
 }
 
-handle_input! : Str, NodeState => Try(NodeState, [StdoutErr(IOErr)])
+handle_input! : Str, NodeState => Try(NodeState, [Interrupted, StdoutErr(IOErr)])
 handle_input! = |input, node_state| {
 	type_payload : Payload({ type : Str })
 	type_payload = decode_json(input)

@@ -1,5 +1,5 @@
 app [main!] {
-	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.25.0/CZsY7tYZwR3rj9kYbpaCfxki2yVAaRL8bBwMLvB2xkbA.tar.zst",
+	pf: platform "https://github.com/roc-lang/basic-cli/releases/download/0.27.0/9yjxqdGTP4xSpSEmDazwTmRsehfRZzA19pwEKkR6fj1g.tar.zst",
 }
 
 import pf.IOErr
@@ -32,7 +32,7 @@ compute_total = |state| {
 	$total
 }
 
-sync_seq_kv! : NodeState => Try(NodeState, [StdoutErr(IOErr)])
+sync_seq_kv! : NodeState => Try(NodeState, [Interrupted, StdoutErr(IOErr)])
 sync_seq_kv! = |state| {
 	my_value = get_node_value(state.cached_values, state.node_id)
 	state_after_write = send_message!(
@@ -56,7 +56,7 @@ sync_seq_kv! = |state| {
 	Ok($curr)
 }
 
-handle_input! : Str, NodeState => Try(NodeState, [StdoutErr(IOErr)])
+handle_input! : Str, NodeState => Try(NodeState, [Interrupted, StdoutErr(IOErr)])
 handle_input! = |input, node_state| {
 	type_payload : Payload({ type : Str })
 	type_payload = decode_json(input)
@@ -68,9 +68,9 @@ handle_input! = |input, node_state| {
 				payload = decode_json(input)
 
 				cmd_str = "while true; do sleep 1; echo '{\"src\":\"${payload.body.node_id}\",\"dest\":\"${payload.body.node_id}\",\"body\":{\"type\":\"tick\"}}'; done"
-				cmd = Cmd.new_str("sh").args_str(["-c", cmd_str]).manage_tree(Bool.True)
+				cmd = Cmd.new("sh").args(["-c", cmd_str]).manage_tree(True)
 				ticker =
-					match Cmd.spawn!(cmd) {
+					match cmd.spawn!() {
 						Ok(c) => [c]
 						Err(_) => []
 					}
